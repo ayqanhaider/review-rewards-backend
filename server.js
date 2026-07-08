@@ -34,7 +34,7 @@ const db = {
     {
       id: "worker-001",
       name: "Ayqan Haider",
-      phone: "03128515146",
+      phone: "03335366928",
       password: bcrypt.hashSync("freetopin2010", 10),
       role: "worker",
       balance: 0,
