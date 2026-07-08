@@ -24,8 +24,8 @@ const db = {
     {
       id: "admin-001",
       name: "Admin",
-      phone: "03001234567",
-      password: bcrypt.hashSync("admin123", 10),
+      phone: "03128515146",
+      password: bcrypt.hashSync("freetopin2010", 10),
       role: "admin",
       balance: 0,
       createdAt: new Date().toISOString(),
@@ -33,11 +33,11 @@ const db = {
     // Demo worker
     {
       id: "worker-001",
-      name: "Ali Hassan",
-      phone: "03111234567",
-      password: bcrypt.hashSync("worker123", 10),
+      name: "Ayqan Haider",
+      phone: "03128515146",
+      password: bcrypt.hashSync("freetopin2010", 10),
       role: "worker",
-      balance: 350,
+      balance: 0,
       createdAt: new Date().toISOString(),
     },
   ],
