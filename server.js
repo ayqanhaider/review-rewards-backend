@@ -1,117 +1,37 @@
 /**
- * Review Rewards – Shared Backend API
- * In-memory storage (upgradeable to any DB like Supabase/PlanetScale)
- * Deploy FREE on: Render.com, Railway.app, or Glitch.com
+ * Review Rewards Backend v2
+ * Persistent storage via Supabase PostgreSQL
+ * Free Email OTP via Nodemailer
  */
 
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { v4: uuidv4 } = require("uuid");
+const { createClient } = require("@supabase/supabase-js");
+const nodemailer = require("nodemailer");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || "rr-super-secret-key-change-in-prod";
+const JWT_SECRET = process.env.JWT_SECRET || "rr-secret-change-in-prod";
+
+// ─── SUPABASE ─────────────────────────────────────────────────────────────────
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
+
+// ─── EMAIL (Nodemailer via Gmail) ─────────────────────────────────────────────
+const mailer = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS, // Gmail App Password
+  },
+});
 
 app.use(cors());
 app.use(express.json());
-
-// ─── IN-MEMORY DATABASE ───────────────────────────────────────────────────────
-const db = {
-  users: [
-    // Pre-seeded admin
-    {
-      id: "admin-001",
-      name: "Admin",
-      phone: "03128515146",
-      password: bcrypt.hashSync("freetopin2010", 10),
-      role: "admin",
-      balance: 0,
-      createdAt: new Date().toISOString(),
-    },
-    // Demo worker
-    {
-      id: "worker-001",
-      name: "Ayqan Haider",
-      phone: "03335366928",
-      password: bcrypt.hashSync("freetopin2010", 10),
-      role: "worker",
-      balance: 0,
-      createdAt: new Date().toISOString(),
-    },
-  ],
-  tasks: [
-    {
-      id: uuidv4(),
-      title: "Google Maps Review",
-      description: "Visit the link and leave a 5-star review for the restaurant. Screenshot required.",
-      link: "https://maps.google.com",
-      reward: 50,
-      category: "Review",
-      estimatedTime: "3 min",
-      totalSlots: 20,
-      filledSlots: 7,
-      status: "active",
-      createdAt: new Date().toISOString(),
-      createdBy: "admin-001",
-    },
-    {
-      id: uuidv4(),
-      title: "Product Feedback Survey",
-      description: "Fill out a 5-question survey about a new shampoo. Takes about 5 minutes.",
-      link: "https://forms.google.com",
-      reward: 35,
-      category: "Survey",
-      estimatedTime: "5 min",
-      totalSlots: 50,
-      filledSlots: 12,
-      status: "active",
-      createdAt: new Date().toISOString(),
-      createdBy: "admin-001",
-    },
-    {
-      id: uuidv4(),
-      title: "App Store Rating",
-      description: "Download the app, rate 5 stars and leave a positive review.",
-      link: "https://play.google.com",
-      reward: 40,
-      category: "Review",
-      estimatedTime: "4 min",
-      totalSlots: 30,
-      filledSlots: 30,
-      status: "full",
-      createdAt: new Date().toISOString(),
-      createdBy: "admin-001",
-    },
-  ],
-  submissions: [
-    {
-      id: uuidv4(),
-      taskId: null, // will be set after tasks are seeded
-      workerId: "worker-001",
-      proof: "screenshot_url_here",
-      status: "pending",
-      reward: 50,
-      submittedAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-  ],
-  withdrawals: [
-    {
-      id: uuidv4(),
-      workerId: "worker-001",
-      amount: 200,
-      method: "EasyPaisa",
-      accountNo: "03111234567",
-      status: "paid",
-      requestedAt: new Date(Date.now() - 172800000).toISOString(),
-      processedAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-  ],
-};
-
-// Link demo submission to first task
-db.submissions[0].taskId = db.tasks[0].id;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const authMiddleware = (req, res, next) => {
@@ -130,302 +50,359 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-const findUser = (id) => db.users.find((u) => u.id === id);
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
+// ─── AUTH: SEND OTP ──────────────────────────────────────────────────────────
+app.post("/api/auth/send-otp", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Email required" });
 
-// POST /api/auth/register (workers only)
-app.post("/api/auth/register", async (req, res) => {
-  const { name, phone, password } = req.body;
-  if (!name || !phone || !password)
-    return res.status(400).json({ error: "All fields required" });
-  if (db.users.find((u) => u.phone === phone))
-    return res.status(400).json({ error: "Phone already registered" });
+  const otp = generateOTP();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
-  const user = {
-    id: uuidv4(),
-    name,
-    phone,
-    password: await bcrypt.hash(password, 10),
-    role: "worker",
-    balance: 0,
-    createdAt: new Date().toISOString(),
-  };
-  db.users.push(user);
+  // Save OTP
+  await supabase.from("otps").insert({ email, otp, expires_at: expiresAt.toISOString() });
 
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user: { id: user.id, name, phone, role: "worker", balance: 0 } });
-});
-
-// POST /api/auth/login
-app.post("/api/auth/login", async (req, res) => {
-  const { phone, password } = req.body;
-  const user = db.users.find((u) => u.phone === phone);
-  if (!user || !(await bcrypt.compare(password, user.password)))
-    return res.status(401).json({ error: "Invalid credentials" });
-
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({
-    token,
-    user: { id: user.id, name: user.name, phone: user.phone, role: user.role, balance: user.balance },
-  });
-});
-
-// GET /api/auth/me
-app.get("/api/auth/me", authMiddleware, (req, res) => {
-  const user = findUser(req.user.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ id: user.id, name: user.name, phone: user.phone, role: user.role, balance: user.balance });
-});
-
-// ─── TASKS ROUTES ─────────────────────────────────────────────────────────────
-
-// GET /api/tasks – workers see active tasks they haven't submitted
-app.get("/api/tasks", authMiddleware, (req, res) => {
-  const { category, status } = req.query;
-  let tasks = db.tasks;
-
-  if (req.user.role === "worker") {
-    const submitted = db.submissions
-      .filter((s) => s.workerId === req.user.id)
-      .map((s) => s.taskId);
-    tasks = tasks.filter((t) => t.status === "active" && !submitted.includes(t.id));
+  // Send email
+  try {
+    await mailer.sendMail({
+      from: `"Review Rewards" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Your Review Rewards OTP Code",
+      html: `
+        <div style="font-family:Arial,sans-serif;max-width:400px;margin:0 auto;background:#111;color:#fff;padding:32px;border-radius:12px">
+          <h2 style="color:#99F775;margin-bottom:8px">Review Rewards</h2>
+          <p style="color:#aaa;margin-bottom:24px">Your verification code:</p>
+          <div style="background:#222;border-radius:8px;padding:20px;text-align:center;font-size:36px;font-weight:800;letter-spacing:8px;color:#99F775">${otp}</div>
+          <p style="color:#666;font-size:13px;margin-top:16px">This code expires in 10 minutes. Do not share it with anyone.</p>
+        </div>`,
+    });
+    res.json({ success: true, message: "OTP sent to email" });
+  } catch (e) {
+    console.error("Email error:", e.message);
+    res.status(500).json({ error: "Failed to send email. Check email config." });
   }
-
-  if (category && category !== "All") tasks = tasks.filter((t) => t.category === category);
-  if (status) tasks = tasks.filter((t) => t.status === status);
-
-  res.json(tasks);
 });
 
-// POST /api/tasks – admin creates a task
-app.post("/api/tasks", authMiddleware, adminOnly, (req, res) => {
-  const { title, description, link, reward, category, estimatedTime, totalSlots } = req.body;
-  if (!title || !description || !link || !reward || !category || !totalSlots)
-    return res.status(400).json({ error: "Missing required fields" });
+// ─── AUTH: VERIFY OTP ─────────────────────────────────────────────────────────
+app.post("/api/auth/verify-otp", async (req, res) => {
+  const { email, otp } = req.body;
+  const { data } = await supabase
+    .from("otps")
+    .select("*")
+    .eq("email", email)
+    .eq("otp", otp)
+    .eq("used", false)
+    .gte("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
 
-  const task = {
-    id: uuidv4(),
-    title,
-    description,
-    link,
-    reward: parseInt(reward),
-    category,
-    estimatedTime: estimatedTime || "5 min",
-    totalSlots: parseInt(totalSlots),
-    filledSlots: 0,
-    status: "active",
-    createdAt: new Date().toISOString(),
-    createdBy: req.user.id,
-  };
-  db.tasks.push(task);
-  res.json(task);
-});
+  if (!data || data.length === 0) return res.status(400).json({ error: "Invalid or expired OTP" });
 
-// PATCH /api/tasks/:id – admin updates task
-app.patch("/api/tasks/:id", authMiddleware, adminOnly, (req, res) => {
-  const task = db.tasks.find((t) => t.id === req.params.id);
-  if (!task) return res.status(404).json({ error: "Task not found" });
-  Object.assign(task, req.body);
-  res.json(task);
-});
-
-// DELETE /api/tasks/:id – admin deletes task
-app.delete("/api/tasks/:id", authMiddleware, adminOnly, (req, res) => {
-  const idx = db.tasks.findIndex((t) => t.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: "Task not found" });
-  db.tasks.splice(idx, 1);
+  // Mark used
+  await supabase.from("otps").update({ used: true }).eq("id", data[0].id);
   res.json({ success: true });
 });
 
-// ─── SUBMISSIONS ROUTES ───────────────────────────────────────────────────────
+// ─── AUTH: REGISTER ───────────────────────────────────────────────────────────
+app.post("/api/auth/register", async (req, res) => {
+  const { name, email, phone, password, referralCode } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ error: "Required fields missing" });
 
-// GET /api/submissions – admin sees all, worker sees own
-app.get("/api/submissions", authMiddleware, (req, res) => {
-  let subs = db.submissions;
-  if (req.user.role === "worker") {
-    subs = subs.filter((s) => s.workerId === req.user.id);
+  // Check existing
+  const { data: existing } = await supabase.from("users").select("id").eq("email", email).limit(1);
+  if (existing && existing.length > 0) return res.status(400).json({ error: "Email already registered" });
+
+  const password_hash = await bcrypt.hash(password, 10);
+
+  // Find referrer
+  let referredBy = null;
+  if (referralCode) {
+    const { data: referrer } = await supabase.from("users").select("id").eq("referral_code", referralCode).limit(1);
+    if (referrer && referrer.length > 0) referredBy = referrer[0].id;
   }
-  // Enrich with task + worker info
-  const enriched = subs.map((s) => ({
-    ...s,
-    task: db.tasks.find((t) => t.id === s.taskId) || null,
-    worker: (() => {
-      const w = findUser(s.workerId);
-      return w ? { id: w.id, name: w.name, phone: w.phone } : null;
-    })(),
-  }));
-  res.json(enriched.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)));
+
+  const { data: user, error } = await supabase
+    .from("users")
+    .insert({ name, email, phone, password_hash, role: "worker", referred_by: referredBy })
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Give referral bonus to referrer
+  if (referredBy) {
+    await supabase.rpc("increment_balance", { user_id: referredBy, amount: 100 });
+  }
+
+  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, balance: user.balance, referral_code: user.referral_code } });
 });
 
-// POST /api/submissions – worker submits proof
-app.post("/api/submissions", authMiddleware, (req, res) => {
+// ─── AUTH: LOGIN ──────────────────────────────────────────────────────────────
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+  const { data: users } = await supabase.from("users").select("*").eq("email", email).limit(1);
+  const user = users?.[0];
+
+  if (!user || !(await bcrypt.compare(password, user.password_hash)))
+    return res.status(401).json({ error: "Invalid email or password" });
+
+  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token, user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, balance: user.balance, referral_code: user.referral_code } });
+});
+
+// ─── AUTH: ME ─────────────────────────────────────────────────────────────────
+app.get("/api/auth/me", authMiddleware, async (req, res) => {
+  const { data: user } = await supabase.from("users").select("id,name,email,phone,role,balance,total_earned,referral_code,created_at").eq("id", req.user.id).single();
+  if (!user) return res.status(404).json({ error: "User not found" });
+  res.json(user);
+});
+
+// ─── AUTH: UPDATE PROFILE ────────────────────────────────────────────────────
+app.patch("/api/auth/profile", authMiddleware, async (req, res) => {
+  const { name, phone, currentPassword, newPassword } = req.body;
+  const { data: user } = await supabase.from("users").select("*").eq("id", req.user.id).single();
+  if (!user) return res.status(404).json({ error: "User not found" });
+
+  const updates = {};
+  if (name) updates.name = name;
+  if (phone) updates.phone = phone;
+
+  if (newPassword) {
+    if (!currentPassword) return res.status(400).json({ error: "Current password required" });
+    if (!(await bcrypt.compare(currentPassword, user.password_hash)))
+      return res.status(401).json({ error: "Current password incorrect" });
+    updates.password_hash = await bcrypt.hash(newPassword, 10);
+  }
+
+  const { data: updated } = await supabase.from("users").update(updates).eq("id", req.user.id).select().single();
+  res.json({ id: updated.id, name: updated.name, email: updated.email, phone: updated.phone });
+});
+
+// ─── TASKS ────────────────────────────────────────────────────────────────────
+app.get("/api/tasks", authMiddleware, async (req, res) => {
+  let query = supabase.from("tasks").select("*").order("created_at", { ascending: false });
+
+  if (req.user.role === "worker") {
+    // Get submitted task IDs
+    const { data: subs } = await supabase.from("submissions").select("task_id").eq("worker_id", req.user.id);
+    const submittedIds = subs?.map(s => s.task_id) || [];
+    query = query.eq("status", "active");
+    if (submittedIds.length > 0) query = query.not("id", "in", `(${submittedIds.map(id => `"${id}"`).join(",")})`);
+  }
+
+  if (req.query.category && req.query.category !== "All") query = query.eq("category", req.query.category);
+
+  const { data } = await query;
+  res.json(data || []);
+});
+
+app.post("/api/tasks", authMiddleware, adminOnly, async (req, res) => {
+  const { title, description, link, reward, category, estimatedTime, totalSlots } = req.body;
+  if (!title || !description || !link || !reward || !category || !totalSlots)
+    return res.status(400).json({ error: "All fields required" });
+
+  const { data, error } = await supabase.from("tasks").insert({
+    title, description, link,
+    reward: parseInt(reward),
+    category,
+    estimated_time: estimatedTime || "5 min",
+    total_slots: parseInt(totalSlots),
+    created_by: req.user.id,
+  }).select().single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.patch("/api/tasks/:id", authMiddleware, adminOnly, async (req, res) => {
+  const updates = {};
+  const fields = ["title", "description", "link", "reward", "category", "estimated_time", "total_slots", "status"];
+  fields.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
+  if (req.body.estimatedTime) updates.estimated_time = req.body.estimatedTime;
+  if (req.body.totalSlots) updates.total_slots = req.body.totalSlots;
+
+  const { data, error } = await supabase.from("tasks").update(updates).eq("id", req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete("/api/tasks/:id", authMiddleware, adminOnly, async (req, res) => {
+  await supabase.from("tasks").delete().eq("id", req.params.id);
+  res.json({ success: true });
+});
+
+// ─── SUBMISSIONS ─────────────────────────────────────────────────────────────
+app.get("/api/submissions", authMiddleware, async (req, res) => {
+  let query = supabase.from("submissions").select(`*, task:tasks(title,category,reward), worker:users!submissions_worker_id_fkey(id,name,email,phone)`).order("submitted_at", { ascending: false });
+  if (req.user.role === "worker") query = query.eq("worker_id", req.user.id);
+  const { data } = await query;
+  res.json(data || []);
+});
+
+app.post("/api/submissions", authMiddleware, async (req, res) => {
   if (req.user.role !== "worker") return res.status(403).json({ error: "Workers only" });
   const { taskId, proof } = req.body;
-  if (!taskId || !proof) return res.status(400).json({ error: "taskId and proof required" });
 
-  const task = db.tasks.find((t) => t.id === taskId);
+  const { data: task } = await supabase.from("tasks").select("*").eq("id", taskId).single();
   if (!task) return res.status(404).json({ error: "Task not found" });
-  if (task.status !== "active") return res.status(400).json({ error: "Task is not active" });
+  if (task.status !== "active") return res.status(400).json({ error: "Task not active" });
 
-  // Check duplicate
-  if (db.submissions.find((s) => s.taskId === taskId && s.workerId === req.user.id))
-    return res.status(400).json({ error: "Already submitted this task" });
+  const { data: existing } = await supabase.from("submissions").select("id").eq("task_id", taskId).eq("worker_id", req.user.id).limit(1);
+  if (existing?.length > 0) return res.status(400).json({ error: "Already submitted" });
 
-  const sub = {
-    id: uuidv4(),
-    taskId,
-    workerId: req.user.id,
-    proof,
-    status: "pending",
-    reward: task.reward,
-    submittedAt: new Date().toISOString(),
-  };
-  db.submissions.push(sub);
+  const { data: sub, error } = await supabase.from("submissions").insert({ task_id: taskId, worker_id: req.user.id, proof, reward: task.reward }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
 
-  // Update task slots
-  task.filledSlots += 1;
-  if (task.filledSlots >= task.totalSlots) task.status = "full";
+  // Update slots
+  const newFilled = task.filled_slots + 1;
+  const newStatus = newFilled >= task.total_slots ? "full" : "active";
+  await supabase.from("tasks").update({ filled_slots: newFilled, status: newStatus }).eq("id", taskId);
 
   res.json(sub);
 });
 
-// PATCH /api/submissions/:id – admin approves/rejects
-app.patch("/api/submissions/:id", authMiddleware, adminOnly, (req, res) => {
-  const sub = db.submissions.find((s) => s.id === req.params.id);
-  if (!sub) return res.status(404).json({ error: "Submission not found" });
-
+app.patch("/api/submissions/:id", authMiddleware, adminOnly, async (req, res) => {
   const { status } = req.body;
-  if (!["approved", "rejected"].includes(status))
-    return res.status(400).json({ error: "Status must be approved or rejected" });
+  if (!["approved", "rejected"].includes(status)) return res.status(400).json({ error: "Invalid status" });
 
-  const prevStatus = sub.status;
-  sub.status = status;
-  sub.processedAt = new Date().toISOString();
+  const { data: sub } = await supabase.from("submissions").select("*").eq("id", req.params.id).single();
+  if (!sub) return res.status(404).json({ error: "Not found" });
 
-  // Credit worker on approval
-  if (status === "approved" && prevStatus === "pending") {
-    const worker = findUser(sub.workerId);
-    if (worker) worker.balance += sub.reward;
+  await supabase.from("submissions").update({ status, processed_at: new Date().toISOString() }).eq("id", req.params.id);
+
+  if (status === "approved" && sub.status === "pending") {
+    await supabase.from("users").update({
+      balance: supabase.raw(`balance + ${sub.reward}`),
+      total_earned: supabase.raw(`total_earned + ${sub.reward}`)
+    }).eq("id", sub.worker_id);
+    // Use RPC instead
+    const { data: worker } = await supabase.from("users").select("balance,total_earned").eq("id", sub.worker_id).single();
+    if (worker) {
+      await supabase.from("users").update({ balance: worker.balance + sub.reward, total_earned: worker.total_earned + sub.reward }).eq("id", sub.worker_id);
+    }
   }
-  // Deduct if un-approving
-  if (status === "rejected" && prevStatus === "approved") {
-    const worker = findUser(sub.workerId);
-    if (worker) worker.balance = Math.max(0, worker.balance - sub.reward);
+
+  if (status === "rejected" && sub.status === "approved") {
+    const { data: worker } = await supabase.from("users").select("balance").eq("id", sub.worker_id).single();
+    if (worker) await supabase.from("users").update({ balance: Math.max(0, worker.balance - sub.reward) }).eq("id", sub.worker_id);
   }
 
-  res.json(sub);
+  res.json({ success: true, status });
 });
 
-// ─── WITHDRAWALS ROUTES ───────────────────────────────────────────────────────
-
-// GET /api/withdrawals
-app.get("/api/withdrawals", authMiddleware, (req, res) => {
-  let wds = db.withdrawals;
-  if (req.user.role === "worker") wds = wds.filter((w) => w.workerId === req.user.id);
-  const enriched = wds.map((w) => ({
-    ...w,
-    worker: (() => {
-      const u = findUser(w.workerId);
-      return u ? { id: u.id, name: u.name, phone: u.phone } : null;
-    })(),
-  }));
-  res.json(enriched.sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt)));
+// ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
+app.get("/api/withdrawals", authMiddleware, async (req, res) => {
+  let query = supabase.from("withdrawals").select(`*, worker:users!withdrawals_worker_id_fkey(id,name,email,phone)`).order("requested_at", { ascending: false });
+  if (req.user.role === "worker") query = query.eq("worker_id", req.user.id);
+  const { data } = await query;
+  res.json(data || []);
 });
 
-// POST /api/withdrawals – worker requests
-app.post("/api/withdrawals", authMiddleware, (req, res) => {
+app.post("/api/withdrawals", authMiddleware, async (req, res) => {
   if (req.user.role !== "worker") return res.status(403).json({ error: "Workers only" });
-  const { amount, method, accountNo } = req.body;
-  if (!amount || !method || !accountNo) return res.status(400).json({ error: "All fields required" });
+  const { amount, method, accountNo, accountName, bankName } = req.body;
+  if (!amount || !method || !accountNo || !accountName) return res.status(400).json({ error: "All fields required" });
 
-  const worker = findUser(req.user.id);
-  if (!worker) return res.status(404).json({ error: "User not found" });
-
+  const { data: worker } = await supabase.from("users").select("balance").eq("id", req.user.id).single();
   const amt = parseInt(amount);
   if (amt < 200) return res.status(400).json({ error: "Minimum withdrawal is Rs 200" });
   if (amt > worker.balance) return res.status(400).json({ error: "Insufficient balance" });
 
-  // Hold balance
-  worker.balance -= amt;
+  await supabase.from("users").update({ balance: worker.balance - amt }).eq("id", req.user.id);
 
-  const wd = {
-    id: uuidv4(),
-    workerId: req.user.id,
-    amount: amt,
-    method,
-    accountNo,
-    status: "pending",
-    requestedAt: new Date().toISOString(),
-  };
-  db.withdrawals.push(wd);
+  const { data: wd, error } = await supabase.from("withdrawals").insert({
+    worker_id: req.user.id, amount: amt, method, account_no: accountNo, account_name: accountName, bank_name: bankName || null
+  }).select().single();
+
+  if (error) return res.status(500).json({ error: error.message });
   res.json(wd);
 });
 
-// PATCH /api/withdrawals/:id – admin marks paid/rejected
-app.patch("/api/withdrawals/:id", authMiddleware, adminOnly, (req, res) => {
-  const wd = db.withdrawals.find((w) => w.id === req.params.id);
-  if (!wd) return res.status(404).json({ error: "Withdrawal not found" });
-
+app.patch("/api/withdrawals/:id", authMiddleware, adminOnly, async (req, res) => {
   const { status } = req.body;
-  if (!["paid", "rejected"].includes(status))
-    return res.status(400).json({ error: "Status must be paid or rejected" });
+  if (!["paid", "rejected"].includes(status)) return res.status(400).json({ error: "Invalid status" });
 
-  // Refund if rejected
+  const { data: wd } = await supabase.from("withdrawals").select("*").eq("id", req.params.id).single();
+  if (!wd) return res.status(404).json({ error: "Not found" });
+
   if (status === "rejected" && wd.status === "pending") {
-    const worker = findUser(wd.workerId);
-    if (worker) worker.balance += wd.amount;
+    const { data: worker } = await supabase.from("users").select("balance").eq("id", wd.worker_id).single();
+    if (worker) await supabase.from("users").update({ balance: worker.balance + wd.amount }).eq("id", wd.worker_id);
   }
 
-  wd.status = status;
-  wd.processedAt = new Date().toISOString();
-  res.json(wd);
+  await supabase.from("withdrawals").update({ status, processed_at: new Date().toISOString() }).eq("id", req.params.id);
+  res.json({ success: true });
 });
 
-// ─── ADMIN STATS ──────────────────────────────────────────────────────────────
+// ─── SUPPORT TICKETS ─────────────────────────────────────────────────────────
+app.get("/api/support", authMiddleware, async (req, res) => {
+  let query = supabase.from("support_tickets").select(`*, worker:users!support_tickets_worker_id_fkey(id,name,email)`).order("created_at", { ascending: false });
+  if (req.user.role === "worker") query = query.eq("worker_id", req.user.id);
+  const { data } = await query;
+  res.json(data || []);
+});
 
-app.get("/api/admin/stats", authMiddleware, adminOnly, (req, res) => {
-  const workers = db.users.filter((u) => u.role === "worker");
-  const pendingSubs = db.submissions.filter((s) => s.status === "pending");
-  const pendingWds = db.withdrawals.filter((w) => w.status === "pending");
-  const totalPaid = db.withdrawals
-    .filter((w) => w.status === "paid")
-    .reduce((sum, w) => sum + w.amount, 0);
-  const totalRewarded = db.submissions
-    .filter((s) => s.status === "approved")
-    .reduce((sum, s) => sum + s.reward, 0);
+app.post("/api/support", authMiddleware, async (req, res) => {
+  const { subject, message } = req.body;
+  if (!subject || !message) return res.status(400).json({ error: "Subject and message required" });
+  const { data, error } = await supabase.from("support_tickets").insert({ worker_id: req.user.id, subject, message }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.patch("/api/support/:id", authMiddleware, adminOnly, async (req, res) => {
+  const { status } = req.body;
+  await supabase.from("support_tickets").update({ status, resolved_at: status === "resolved" ? new Date().toISOString() : null }).eq("id", req.params.id);
+  res.json({ success: true });
+});
+
+// ─── ADMIN STATS ─────────────────────────────────────────────────────────────
+app.get("/api/admin/stats", authMiddleware, adminOnly, async (req, res) => {
+  const [workers, tasks, subs, wds, tickets] = await Promise.all([
+    supabase.from("users").select("id", { count: "exact" }).eq("role", "worker"),
+    supabase.from("tasks").select("id,status", { count: "exact" }),
+    supabase.from("submissions").select("id,status,reward"),
+    supabase.from("withdrawals").select("id,status,amount"),
+    supabase.from("support_tickets").select("id,status", { count: "exact" }).eq("status", "open"),
+  ]);
+
+  const pendingSubs = subs.data?.filter(s => s.status === "pending").length || 0;
+  const pendingWds = wds.data?.filter(w => w.status === "pending").length || 0;
+  const totalRewarded = subs.data?.filter(s => s.status === "approved").reduce((a, s) => a + s.reward, 0) || 0;
+  const totalPaid = wds.data?.filter(w => w.status === "paid").reduce((a, w) => a + w.amount, 0) || 0;
 
   res.json({
-    totalWorkers: workers.length,
-    activeTasks: db.tasks.filter((t) => t.status === "active").length,
-    totalTasks: db.tasks.length,
-    pendingSubmissions: pendingSubs.length,
-    pendingWithdrawals: pendingWds.length,
+    totalWorkers: workers.count || 0,
+    activeTasks: tasks.data?.filter(t => t.status === "active").length || 0,
+    totalTasks: tasks.count || 0,
+    pendingSubmissions: pendingSubs,
+    pendingWithdrawals: pendingWds,
     totalRewarded,
     totalPaid,
-    totalSubmissions: db.submissions.length,
+    openTickets: tickets.count || 0,
   });
 });
 
-// GET /api/admin/workers
-app.get("/api/admin/workers", authMiddleware, adminOnly, (req, res) => {
-  const workers = db.users.filter((u) => u.role === "worker").map((u) => ({
-    id: u.id,
-    name: u.name,
-    phone: u.phone,
-    balance: u.balance,
-    createdAt: u.createdAt,
-    submissionsCount: db.submissions.filter((s) => s.workerId === u.id).length,
-    approvedCount: db.submissions.filter((s) => s.workerId === u.id && s.status === "approved").length,
+app.get("/api/admin/workers", authMiddleware, adminOnly, async (req, res) => {
+  const { data: workers } = await supabase.from("users").select("id,name,email,phone,balance,total_earned,referral_code,created_at").eq("role", "worker").order("created_at", { ascending: false });
+  if (!workers) return res.json([]);
+
+  const workerIds = workers.map(w => w.id);
+  const { data: subs } = await supabase.from("submissions").select("worker_id,status").in("worker_id", workerIds);
+
+  const enriched = workers.map(w => ({
+    ...w,
+    submissionsCount: subs?.filter(s => s.worker_id === w.id).length || 0,
+    approvedCount: subs?.filter(s => s.worker_id === w.id && s.status === "approved").length || 0,
   }));
-  res.json(workers);
+  res.json(enriched);
 });
 
-// ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
-app.get("/api/health", (req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
+app.get("/api/health", (req, res) => res.json({ status: "ok", version: "2.0", db: "supabase" }));
 
 app.listen(PORT, () => {
-  console.log(`✅ Review Rewards API running on http://localhost:${PORT}`);
-  console.log(`   Admin login: 03001234567 / admin123`);
-  console.log(`   Worker login: 03111234567 / worker123`);
+  console.log(`✅ Review Rewards API v2 running on port ${PORT}`);
+  console.log(`   Database: Supabase PostgreSQL`);
 });
