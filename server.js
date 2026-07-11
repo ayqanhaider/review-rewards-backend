@@ -23,8 +23,8 @@ const EMAIL_PASS = process.env.EMAIL_PASS || "lopa vmhe zssk btrl";
 // Initialize Supabase safely with the fallbacks guaranteed above
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-const supabase = createClient(SUPABASE_URL || "https://placeholder.supabase.co", SUPABASE_SERVICE_KEY || "placeholder");
-
+app.use(cors());
+app.use(express.json());
 const mailer = nodemailer.createTransport({
   service: "gmail",
   auth: { 
