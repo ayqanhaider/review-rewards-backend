@@ -11,15 +11,16 @@ const { createClient } = require("@supabase/supabase-js");
 const nodemailer = require("nodemailer");
 
 const app = express();
-const PORT = process.env.PORT || 10000; // 10000 is Render's default preferred port
+const PORT = process.env.PORT || 10000;
 const JWT_SECRET = process.env.JWT_SECRET || "rr-secret-change-in-prod";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+// Fall back to your original hardcoded credentials if the environment variables are missing
+const SUPABASE_URL = process.env.SUPABASE_URL || "https://yihqpvdsctuhbqzkovbg.supabase.co";
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpaHFwdmRzY3R1aGJxemtvdmJnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzY1ODM0OSwiZXhwIjoyMDk5MjM0MzQ5fQ.exDmVLAdKPOzvS2IzAIDahYkpiyqSwafXbV3p9ZHqkU";
+const EMAIL_USER = process.env.EMAIL_USER || "review.1ewards@gmail.com";
+const EMAIL_PASS = process.env.EMAIL_PASS || "lopa vmhe zssk btrl";
 
-// Fallback warning if environment variables are missing
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.warn("⚠️ Warning: SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables are missing.");
 }
