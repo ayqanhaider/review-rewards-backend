@@ -20,10 +20,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || "eyJhbGciOiJIUz
 const EMAIL_USER = process.env.EMAIL_USER || "review.1ewards@gmail.com";
 const EMAIL_PASS = process.env.EMAIL_PASS || "lopa vmhe zssk btrl";
 
+// Initialize Supabase safely with the fallbacks guaranteed above
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.warn("⚠️ Warning: SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables are missing.");
-}
 
 const supabase = createClient(SUPABASE_URL || "https://placeholder.supabase.co", SUPABASE_SERVICE_KEY || "placeholder");
 
